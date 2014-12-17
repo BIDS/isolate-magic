@@ -57,9 +57,9 @@ class IsolateMagics(Magics):
         post = []
         for c in clauses:
             if c[1].lower() == 'pre':
-                pre = [a.strip() for a in c[2].split(', ')]
+                pre.extend([a.strip() for a in c[2].split(', ')])
             elif c[1].lower() == 'post':
-                post = [a.strip() for a in c[2].split(', ')]
+                post.extend([a.strip() for a in c[2].split(', ')])
         return pre, post
 
 
