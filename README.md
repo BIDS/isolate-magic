@@ -5,7 +5,7 @@ An IPython magic to isolate namespaces
 
 The skeleton for making IPython magics is [here](http://ipython.org/ipython-doc/dev/config/custommagics.html#defining-magics)
 
-Syntax (proposed)
+Syntax (currently)
 ----------
 ```
 %%isolate  pre(pre-conditions of the cell) post(post-conditions of the cell)
@@ -16,6 +16,9 @@ The conditions can be variable names or special names starting with @.
   * post-conditoin variables are pushed to the notebook namespace after cell execution
   * special names prepresent resources that are not in the notebook namespace, for example, files on the disk
   
+An active example is in:
+  * http://nbviewer.ipython.org/github/BIDS/isolate-magic/blob/master/example.ipynb
+
 For example, we can have cells like these:
 
 ```
@@ -24,7 +27,9 @@ For example, we can have cells like these:
 ```
 
 ```
-%%isolate pre(@IMPORTANT_TEXT)
+%%isolate pre(@IMPORTANT_TEXT) post(os)
+# notice that we do not support attribute look up in post
+# hence our post-condition is only 'os'
 import os.path
 assert os.path.exists('README.md')
 ```
