@@ -44,5 +44,5 @@ How to build a DAG from 'isolate' magics:
    1. if cell has pre-condition, look up the post dict, and make a 'improper' link
       if not, issue a warning in some way (marking the cell as dead/incomplete)
 
- 'proper': the tail cell's last execution is up-to-date
- 'improper': the tail cell's last execution is older than its input; it at least needs updated.
+ * 'proper': the tail cell's last execution is up-to-date
+ * 'improper': the tail cell's last execution is older than its input; it at least needs updated.
