@@ -38,5 +38,11 @@ How to build a DAG from 'isolate' magics:
  3. post = {}
  4. transverse the cell list
    1. if cell has post-condition, add the cell to post dict
-   2. if cell has pre-condition, look up the post dict, and make a directional link
-      if not, give a warning or make a special mark on the cell
+   2. if cell has pre-condition, look up the post dict, and make a 'proper' link
+      if not, issue a warning, push the cell to a list of defered cells
+ 5. Loop over the defered cells
+   1. if cell has pre-condition, look up the post dict, and make a 'improper' link
+      if not, issue a warning in some way (marking the cell as dead/incomplete)
+
+ 'proper': the tail cell's last execution is up-to-date
+ 'improper': the tail cell's last execution is older than its input; it at least needs updated.
