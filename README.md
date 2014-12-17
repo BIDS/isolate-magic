@@ -19,12 +19,12 @@ The conditions can be variable names or special names starting with @.
 For example, we can have cells like these:
 
 ```
-%%isolate-post @IMPORTANT_TEXT
+%%isolate post(@IMPORTANT_TEXT)
 !wget http://github.com/BIDS/isolate-magic/tree/README.md
 ```
 
 ```
-%%isolate-pre @IMPORTANT_TEXT
+%%isolate pre(@IMPORTANT_TEXT)
 import os.path
 assert os.path.exists('README.md')
 ```
