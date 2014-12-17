@@ -7,6 +7,76 @@ class PreConditionError(NameError):
     pass
 class PostConditionError(NameError):
     pass
+
+class Cell(object):
+    def __init__(self, id, input, pre, post):
+        self.id = id
+        self.input = input
+        self.pre = pre
+        self.post = post
+        self.fanout = {}
+        self.fanin = {}
+        
+    def _fanstr(self, fan, symbols, flag):
+        l = []
+        for s in symbols:
+            if s in fan:
+                idstr = ', '.join( [ str(c.id) for c in fan[s] ])
+            else:
+                idstr = ''
+
+            if flag == 'in':
+                l.append('{%s => %s}' %(idstr, s))
+            else:
+                l.append('{%s => %s}' %(s, idstr))
+        return ', '.join(l)
+
+    def __repr__(self):
+        fanin = self._fanstr(self.fanin, self.pre, 'in')
+        fanout = self._fanstr(self.fanout, self.post, 'out')
+        repr = "<cell %d: pre(%s) post(%s)>: %s %s" % \
+                (self.id, 
+                        ', '.join(self.pre), 
+                        ', '.join(self.post),
+                fanin,
+                fanout,
+                )
+        return repr
+    def link(self, next, symbol):
+        if symbol not in self.fanout:
+            self.fanout[symbol] = []
+        self.fanout[symbol].append(next)
+
+        if symbol not in next.fanin:
+            next.fanin[symbol] = []
+        next.fanin[symbol].append(self)
+class Dag(object):
+    def __init__(self, cells):
+        self.cells = [
+            parse_cell(i, cell) 
+            for i, cell in enumerate(cells)
+            ]
+        d = {}
+        for cell in self.cells:
+            # all post conditions are updated by this cell
+            for s in cell.post:
+                d[s] = cell
+            for s in cell.pre:
+                if s in d:
+                    d[s].link(cell, s)
+                else:
+                    pass
+                    #raise Exception("can't build DAG, insufficient input")
+
+    def __repr__(self):
+        return '\n'.join([repr(c) for c in self.cells])
+            
+    def __del__(self):
+        # break the cycles
+        for cell in self.cells:
+            cell.fanin.clear()
+            cell.fanout.clear()
+
 @magics_class
 class IsolateMagics(Magics):
     STRICT = 9     # the input is p
@@ -16,6 +86,11 @@ class IsolateMagics(Magics):
         super(IsolateMagics, self).__init__(shell)
         self.level = self.LOOSE
 
+    @line_magic('dag')
+    def dag(self, line):
+        """ make a dag !"""
+        dag = Dag(self.shell.history_manager.input_hist_raw)
+        print dag
     @line_magic('isolatemode')
     def isolatemode(self, line):
         """ 
@@ -50,7 +125,7 @@ class IsolateMagics(Magics):
             %%isolate pre(a, b, c) post(d, e, f) 
             %%isolate pre(a, b, c) post(d, e, f)  pre(g, h, i)
         """
-        pre, post = self.parser(line)
+        pre, post = parse(line)
 
         old_ns = self.shell.user_ns.copy()
 
@@ -103,18 +178,25 @@ class IsolateMagics(Magics):
                     continue
                 self.shell.user_ns[symbol] = after_ns[symbol]
 
-    def parser(self, line):
-        clauses = re.findall('(\s*(pre|post)\(([^)]*)\))', line)
-        pre = []
-        post = []
-        for c in clauses:
-            if c[1].lower() == 'pre':
-                pre.extend([a.strip() for a in c[2].split(', ')])
-            elif c[1].lower() == 'post':
-                post.extend([a.strip() for a in c[2].split(', ')])
-        return pre, post
 
 
+def parse_cell(i, cell):
+    for line in cell.split('\n'):
+        if not line.startswith('%%isolate'):
+            pass
+        return Cell(i, cell, *parse(line))
+    return None
+
+def parse(line):
+    clauses = re.findall('(\s*(pre|post)\(([^)]*)\))', line)
+    pre = []
+    post = []
+    for c in clauses:
+        if c[1].lower() == 'pre':
+            pre.extend([a.strip() for a in c[2].split(', ')])
+        elif c[1].lower() == 'post':
+            post.extend([a.strip() for a in c[2].split(', ')])
+    return pre, post
 # In order to actually use these magics, you must register them with a
 # running IPython.  This code must be placed in a file that is loaded
 # once
