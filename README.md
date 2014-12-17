@@ -7,9 +7,10 @@ The skeleton for making IPython magics is [here](http://ipython.org/ipython-doc/
 
 Syntax (proposed)
 ----------
-
+```
 %%isolate-pre:  pre-conditions of the cell
 %%isolate-post: post-conditions of the cell
+```
 
 The conditions can be variable names or special names starting with @.
   * pre-condition variables are pull from the notebook namespace before cell execution
