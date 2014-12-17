@@ -7,49 +7,101 @@ class PreConditionError(NameError):
     pass
 class PostConditionError(NameError):
     pass
-
 @magics_class
 class IsolateMagics(Magics):
+    STRICT = 9     # the input is p
+    UNPROTECTED = -1
+    LOOSE = 0
+    def __init__(self, shell):
+        super(IsolateMagics, self).__init__(shell)
+        self.level = self.LOOSE
+
+    @line_magic('isolatemode')
+    def isolatemode(self, line):
+        """ 
+            %%isolatemode [ unprotected | loose | strict ] 
+            Three modes are supported:
+
+            unprotected: the pre and post clauses are descriptive only
+
+            loose: the output is pruned. Any symbols undeclared with post clause
+               is purged from the notebook namespace after the cell is done.
+            strict: in addition to `loose'; 
+               the input is pruned. Only symbols declared with pre are kept when
+               the cell is ran.
+
+        """
+        line = line.lower().split()
+        if 'strict' in line:
+            self.level = self.STRICT
+        elif 'unprotected' in line:
+            self.level = self.UNPROTECTED
+        elif 'loose' in line:
+            self.level = self.LOOSE
+        else:
+            raise ValueError("Unsupported isolatemode")
+
     @cell_magic('isolate')
-    def isolate(self, line, cell, protected=True):
+    def isolate(self, line, cell):
+        """ declare symbols pre and post the cell execution 
+
+            use %%isolatemode to set the global isolation mode
+
+            %%isolate pre(a, b, c) post(d, e, f) 
+            %%isolate pre(a, b, c) post(d, e, f)  pre(g, h, i)
+        """
         pre, post = self.parser(line)
 
-        oldnames = set(self.shell.user_ns.keys())
-        badnames = []
+        old_ns = self.shell.user_ns.copy()
 
-        for symbol in pre:
-            if symbol.startswith('@'):
-                continue
-            if not symbol in oldnames:
-                badnames.append(symbol)
-        if len(badnames) > 0:
-            raise PreConditionError("The following variables are undefined: %s",
-                    str(badnames))
+        if self.level > self.UNPROTECTED:
+            badnames = [
+                symbol
+                for symbol in pre if not (
+                    symbol.startswith('@')
+                    or
+                    symbol in old_ns)
+            ]
+
+            if len(badnames) > 0:
+                raise PreConditionError("The following variables are undefined: %s",
+                        str(badnames))
+
+        if self.level >= self.STRICT:
+            self.shell.user_ns.clear()
+            for symbol in pre:
+                if symbol.startswith('@'):
+                    continue
+                self.shell.user_ns[symbol] = old_ns[symbol]
 
         # the juice is here
         # ipython processes other magics
         self.shell.run_cell(cell)
 
-        badnames = []
+        after_ns = self.shell.user_ns.copy()
 
-        for symbol in post:
-            if symbol.startswith('@'):
-                continue
-            if not symbol in self.shell.user_ns:
-                badnames.append(symbol)
+        if self.level > self.UNPROTECTED:
+            badnames = [
+                symbol
+                for symbol in post if not (
+                    symbol.startswith('@')
+                    or
+                    symbol in after_ns)
+            ]
+            # alright, due to #7256 we can't tell if run_cell failed or not
+            # so on failures we get a second error due to post-conditions.
+            if len(badnames) > 0:
+                raise PostConditionError("The following variables are undefined: %s",
+                        str(badnames))
 
-        # alright, due to #7256 we can't tell if run_cell failed or not
-        # so on failures we get a second error due to post-conditions.
-        if len(badnames) > 0:
-            raise PostConditionError("The following variables are undefined: %s",
-                    str(badnames))
 
-        if protected:
-            # now remove extra symbols in the user ns:
-            for symbol in self.shell.user_ns.keys():
-                if symbol not in post and symbol not in oldnames:
-                    self.shell.user_ns.pop(symbol)
-
+        if self.level >= self.LOOSE:
+            self.shell.user_ns.clear()
+            self.shell.user_ns.update(old_ns)
+            for symbol in post:
+                if symbol.startswith('@'):
+                    continue
+                self.shell.user_ns[symbol] = after_ns[symbol]
 
     def parser(self, line):
         clauses = re.findall('(\s*(pre|post)\(([^)]*)\))', line)
