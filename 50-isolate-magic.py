@@ -3,6 +3,11 @@ from IPython.core.magic import (Magics, magics_class, line_magic,
                                         cell_magic, line_cell_magic)
 import re
 
+try:
+    import networkx as nx
+except:
+    pass
+
 class PreConditionError(NameError):
     pass
 class PostConditionError(NameError):
@@ -14,6 +19,8 @@ class Cell(object):
         self.input = input
         self.pre = pre
         self.post = post
+        # If we stick with networkx, we should just have metadata inside the
+        # node, and delete these inside our Cell object
         self.fanout = {}
         self.fanin = {}
 
@@ -32,16 +39,25 @@ class Cell(object):
         return ', '.join(l)
 
     def __repr__(self):
-        fanin = self._fanstr(self.fanin, self.pre, 'in')
-        fanout = self._fanstr(self.fanout, self.post, 'out')
-        repr = "<cell %d: pre(%s) post(%s)>: %s %s" % \
-                (self.id,
-                        ', '.join(self.pre),
-                        ', '.join(self.post),
-                fanin,
-                fanout,
+        # fanin = self._fanstr(self.fanin, self.pre, 'in')
+        # fanout = self._fanstr(self.fanout, self.post, 'out')
+        repr = "<cell {}: pre({}) post({})>".format(
+                self.id,
+                ', '.join(self.pre),
+                ', '.join(self.post),
+                # fanin,
+                # fanout,
                 )
         return repr
+
+    # This *should* work as long as we have unique id's, right?
+    def __hash__(self):
+        # This does a string hash on the repr
+        return hash(repr(self))
+
+    def __eq__(self, other):
+        return self is other
+
     def link(self, next, symbol):
         if symbol not in self.fanout:
             self.fanout[symbol] = []
@@ -50,12 +66,26 @@ class Cell(object):
         if symbol not in next.fanin:
             next.fanin[symbol] = []
         next.fanin[symbol].append(self)
+
 class Dag(object):
     def __init__(self, cells):
+        # This is probably not the best way to handle this once we figure out
+        # what we want to do
         self.cells = [
             parse_cell(i, cell)
             for i, cell in enumerate(cells)
             ]
+
+        try:
+            self.G = nx.Graph()
+        except NameError:
+            return self.dict_dag(cells)
+
+        for i,j in zip(self.cells[:-1], self.cells[1:]):
+            self.G.add_edge(i,j)
+
+    def dict_dag(self, cells):
+        """Fallback dag representation when we don't have networkx installed"""
         d = {}
         for cell in self.cells:
             # all post conditions are updated by this cell
@@ -73,9 +103,10 @@ class Dag(object):
 
     def __del__(self):
         # break the cycles
-        for cell in self.cells:
-            cell.fanin.clear()
-            cell.fanout.clear()
+        # for cell in self.cells:
+        #     cell.fanin.clear()
+        #     cell.fanout.clear()
+        pass
 
 @magics_class
 class IsolateMagics(Magics):
@@ -90,7 +121,11 @@ class IsolateMagics(Magics):
     def dag(self, line):
         """ make a dag !"""
         dag = Dag(self.shell.history_manager.input_hist_raw)
-        print dag
+        # This logic should probably go in the Dag class
+        try:
+            return nx.draw_networkx(dag.G)
+        except:
+            print dag
     @line_magic('isolatemode')
     def isolatemode(self, line):
         """%%isolatemode [ unprotected | loose | strict ]
@@ -177,6 +212,9 @@ class IsolateMagics(Magics):
                     continue
                 self.shell.user_ns[symbol] = after_ns[symbol]
 
+    @line_magic('iso_debug')
+    def debug(self, _line):
+        return self
 
 
 def parse_cell(i, cell):
