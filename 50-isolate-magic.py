@@ -139,8 +139,9 @@ class IsolateMagics(Magics):
             ]
 
             if len(badnames) > 0:
-                raise PreConditionError("The following variables are undefined: %s",
-                        str(badnames))
+                raise PreConditionError(
+                    "The following variables are undefined: {}".format(
+                        ', '.join(badnames) ) )
 
         if self.level >= self.STRICT:
             self.shell.user_ns.clear()
