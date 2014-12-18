@@ -16,7 +16,7 @@ class Cell(object):
         self.post = post
         self.fanout = {}
         self.fanin = {}
-        
+
     def _fanstr(self, fan, symbols, flag):
         l = []
         for s in symbols:
@@ -35,8 +35,8 @@ class Cell(object):
         fanin = self._fanstr(self.fanin, self.pre, 'in')
         fanout = self._fanstr(self.fanout, self.post, 'out')
         repr = "<cell %d: pre(%s) post(%s)>: %s %s" % \
-                (self.id, 
-                        ', '.join(self.pre), 
+                (self.id,
+                        ', '.join(self.pre),
                         ', '.join(self.post),
                 fanin,
                 fanout,
@@ -53,7 +53,7 @@ class Cell(object):
 class Dag(object):
     def __init__(self, cells):
         self.cells = [
-            parse_cell(i, cell) 
+            parse_cell(i, cell)
             for i, cell in enumerate(cells)
             ]
         d = {}
@@ -70,7 +70,7 @@ class Dag(object):
 
     def __repr__(self):
         return '\n'.join([repr(c) for c in self.cells])
-            
+
     def __del__(self):
         # break the cycles
         for cell in self.cells:
@@ -93,18 +93,16 @@ class IsolateMagics(Magics):
         print dag
     @line_magic('isolatemode')
     def isolatemode(self, line):
-        """ 
-            %%isolatemode [ unprotected | loose | strict ] 
-            Three modes are supported:
+        """%%isolatemode [ unprotected | loose | strict ]
+           Three modes are supported:
 
-            unprotected: the pre and post clauses are descriptive only
+           unprotected: the pre and post clauses are descriptive only
 
-            loose: the output is pruned. Any symbols undeclared with post clause
-               is purged from the notebook namespace after the cell is done.
-            strict: in addition to `loose'; 
-               the input is pruned. Only symbols declared with pre are kept when
-               the cell is ran.
-
+           loose: the output is pruned. Any symbols undeclared with post clause
+              is purged from the notebook namespace after the cell is done.
+           strict: in addition to `loose';
+              the input is pruned. Only symbols declared with pre are kept when
+              the cell is ran.
         """
         line = line.lower().split()
         if 'strict' in line:
@@ -118,11 +116,11 @@ class IsolateMagics(Magics):
 
     @cell_magic('isolate')
     def isolate(self, line, cell):
-        """ declare symbols pre and post the cell execution 
+        """ declare symbols pre and post the cell execution
 
             use %%isolatemode to set the global isolation mode
 
-            %%isolate pre(a, b, c) post(d, e, f) 
+            %%isolate pre(a, b, c) post(d, e, f)
             %%isolate pre(a, b, c) post(d, e, f)  pre(g, h, i)
         """
         pre, post = parse(line)
