@@ -3,110 +3,40 @@ from IPython.core.magic import (Magics, magics_class, line_magic,
                                         cell_magic, line_cell_magic)
 import re
 
-try:
-    import networkx as nx
-except:
-    pass
+import networkx as nx
 
 class PreConditionError(NameError):
     pass
 class PostConditionError(NameError):
     pass
 
-class Cell(object):
-    def __init__(self, id, input, pre, post):
-        self.id = id
-        self.input = input
-        self.pre = pre
-        self.post = post
-        # If we stick with networkx, we should just have metadata inside the
-        # node, and delete these inside our Cell object
-        self.fanout = {}
-        self.fanin = {}
+class Dag(nx.MultiDiGraph):
+    def __init__(self, history):
+        nx.MultiDiGraph.__init__(self)
 
-    def _fanstr(self, fan, symbols, flag):
-        l = []
-        for s in symbols:
-            if s in fan:
-                idstr = ', '.join( [ str(c.id) for c in fan[s] ])
-            else:
-                idstr = ''
-
-            if flag == 'in':
-                l.append('{%s => %s}' %(idstr, s))
-            else:
-                l.append('{%s => %s}' %(s, idstr))
-        return ', '.join(l)
-
-    def __repr__(self):
-        # fanin = self._fanstr(self.fanin, self.pre, 'in')
-        # fanout = self._fanstr(self.fanout, self.post, 'out')
-        repr = "<cell {}: pre({}) post({})>".format(
-                self.id,
-                ', '.join(self.pre),
-                ', '.join(self.post),
-                # fanin,
-                # fanout,
-                )
-        return repr
-
-    # This *should* work as long as we have unique id's, right?
-    def __hash__(self):
-        # This does a string hash on the repr
-        return hash(repr(self))
-
-    def __eq__(self, other):
-        return self is other
-
-    def link(self, next, symbol):
-        if symbol not in self.fanout:
-            self.fanout[symbol] = []
-        self.fanout[symbol].append(next)
-
-        if symbol not in next.fanin:
-            next.fanin[symbol] = []
-        next.fanin[symbol].append(self)
-
-class Dag(object):
-    def __init__(self, cells):
         # This is probably not the best way to handle this once we figure out
         # what we want to do
-        self.cells = [
-            parse_cell(i, cell)
-            for i, cell in enumerate(cells)
-            ]
+        self.add_node(-1, pre=[], post=[], content="",
+                name="#BrokenPreConditions")
 
-        try:
-            self.G = nx.Graph()
-        except NameError:
-            return self.dict_dag(cells)
+        for id, cell in enumerate(history):
+            name, pre, post = parse_unit(cell)
+            if name is None:
+                name = str(id)
+            self.add_node(id, pre=pre, post=post, content=cell, name=name)
 
-        for i,j in zip(self.cells[:-1], self.cells[1:]):
-            self.G.add_edge(i,j)
-
-    def dict_dag(self, cells):
-        """Fallback dag representation when we don't have networkx installed"""
+        # now build the edges
         d = {}
-        for cell in self.cells:
-            # all post conditions are updated by this cell
-            for s in cell.post:
-                d[s] = cell
-            for s in cell.pre:
+        for node, data in self.nodes(data=True):
+            # all post conditions are updated by this unit
+            for s in data['post']:
+                d[s] = node
+            for s in data['pre']:
                 if s in d:
-                    d[s].link(cell, s)
+                    # the direction is flowing from producer to the consumer
+                    self.add_edge(d[s], node, symbol=s)
                 else:
-                    pass
-                    #raise Exception("can't build DAG, insufficient input")
-
-    def __repr__(self):
-        return '\n'.join([repr(c) for c in self.cells])
-
-    def __del__(self):
-        # break the cycles
-        # for cell in self.cells:
-        #     cell.fanin.clear()
-        #     cell.fanout.clear()
-        pass
+                    self.add_edge(-1, node, symbol=s)
 
 @magics_class
 class IsolateMagics(Magics):
@@ -122,10 +52,19 @@ class IsolateMagics(Magics):
         """ make a dag !"""
         dag = Dag(self.shell.history_manager.input_hist_raw)
         # This logic should probably go in the Dag class
-        try:
-            return nx.draw_networkx(dag.G)
-        except:
-            print dag
+        pos = nx.shell_layout(dag)
+        edgelabels = dict(
+                [((node, neighbour), data['symbol'])
+                    for node, neighbour, data in dag.edges(data=True)])
+        nodelabels = dict(
+                [(node, data['name'])
+                    for node, data in dag.nodes(data=True)])
+        return (
+            nx.draw_networkx_nodes(dag, pos, nodesize=900),
+            nx.draw_networkx_edges(dag, pos),
+            nx.draw_networkx_labels(dag, pos, nodelabels),
+            nx.draw_networkx_edge_labels(dag, pos, edgelabels),
+            )
     @line_magic('isolatemode')
     def isolatemode(self, line):
         """%%isolatemode [ unprotected | loose | strict ]
@@ -158,7 +97,7 @@ class IsolateMagics(Magics):
             %%isolate pre(a, b, c) post(d, e, f)
             %%isolate pre(a, b, c) post(d, e, f)  pre(g, h, i)
         """
-        pre, post = parse(line)
+        name, pre, post = parse(line)
 
         old_ns = self.shell.user_ns.copy()
 
@@ -217,23 +156,27 @@ class IsolateMagics(Magics):
         return self
 
 
-def parse_cell(i, cell):
+def parse_unit(cell):
     for line in cell.split('\n'):
         if not line.startswith('%%isolate'):
             pass
-        return Cell(i, cell, *parse(line))
+        name, pre, post = parse(line)
+        return name, pre, post
     return None
 
 def parse(line):
-    clauses = re.findall('(\s*(pre|post)\(([^)]*)\))', line)
+    clauses = re.findall('(\s*(pre|post|name)\(([^)]*)\))', line)
     pre = []
     post = []
+    name = None
     for c in clauses:
         if c[1].lower() == 'pre':
             pre.extend([a.strip() for a in c[2].split(', ')])
         elif c[1].lower() == 'post':
             post.extend([a.strip() for a in c[2].split(', ')])
-    return pre, post
+        elif c[1].lower() == 'name':
+            name = c[2].strip()
+    return name, pre, post
 # In order to actually use these magics, you must register them with a
 # running IPython.  This code must be placed in a file that is loaded
 # once
