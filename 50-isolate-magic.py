@@ -10,33 +10,67 @@ class PreConditionError(NameError):
 class PostConditionError(NameError):
     pass
 
-class Dag(nx.MultiDiGraph):
-    def __init__(self, history):
-        nx.MultiDiGraph.__init__(self)
-
+class Dag(object):
+    @staticmethod
+    def MultiDiGraph(history):
+        mdg = nx.MultiDiGraph()
         # This is probably not the best way to handle this once we figure out
         # what we want to do
-        self.add_node(-1, pre=[], post=[], content="",
+        mdg.add_node(-1, pre=[], post=[], content="",
                 name="#BrokenPreConditions")
 
         for id, cell in enumerate(history):
             name, pre, post = parse_unit(cell)
             if name is None:
                 name = str(id)
-            self.add_node(id, pre=pre, post=post, content=cell, name=name)
+            mdg.add_node(id, pre=pre, post=post, content=cell, name=name)
 
         # now build the edges
         d = {}
-        for node, data in self.nodes(data=True):
+        for node, data in mdg.nodes(data=True):
             # all post conditions are updated by this unit
             for s in data['post']:
                 d[s] = node
             for s in data['pre']:
                 if s in d:
                     # the direction is flowing from producer to the consumer
-                    self.add_edge(d[s], node, symbol=s)
+                    mdg.add_edge(d[s], node, symbol=s)
                 else:
-                    self.add_edge(-1, node, symbol=s)
+                    mdg.add_edge(-1, node, symbol=s)
+        return mdg
+
+    @staticmethod
+    def remove_solitary_nodes(dag):
+        dag = dag.copy()
+        solitary= [ n for n,d in dag.degree_iter() if d==0 ]
+        dag.remove_nodes_from(solitary)
+        return dag
+
+    @staticmethod
+    def merge_edges(dag):
+        G = nx.DiGraph()
+        for node, data in dag.nodes_iter(data=True):
+            G.add_node(node, **data)
+        for u, v, data in dag.edges_iter(data=True):
+            d = {}
+            for name in data:
+                d[name] = [data[name]]
+            if G.has_edge(u,v):
+                for name in data:
+                    G[u][v][name].extend(data[name])
+            else:
+                G.add_edge(u, v, **d)
+        return G
+    @staticmethod
+    def labels(dag):
+        behavededgelabel = lambda x : ', '.join(x) if isinstance(x, list) else x
+        edgelabels = dict(
+                [((node, neighbour), behavededgelabel(data['symbol']))
+                    for node, neighbour, data in dag.edges(data=True)])
+        nodelabels = dict(
+                [(node, '%d:%s' %(node, data['name']))
+                    for node, data in dag.nodes(data=True)])
+        return edgelabels, nodelabels
 
 @magics_class
 class IsolateMagics(Magics):
@@ -50,15 +84,13 @@ class IsolateMagics(Magics):
     @line_magic('dag')
     def dag(self, line):
         """ make a dag !"""
-        dag = Dag(self.shell.history_manager.input_hist_raw)
+        dag = Dag.MultiDiGraph(self.shell.history_manager.input_hist_raw)
+        dag = Dag.merge_edges(dag)
+        dag = Dag.remove_solitary_nodes(dag)
         # This logic should probably go in the Dag class
-        pos = nx.shell_layout(dag)
-        edgelabels = dict(
-                [((node, neighbour), data['symbol'])
-                    for node, neighbour, data in dag.edges(data=True)])
-        nodelabels = dict(
-                [(node, data['name'])
-                    for node, data in dag.nodes(data=True)])
+        pos = nx.spring_layout(dag)
+
+        edgelabels, nodelabels = Dag.labels(dag)
         return (
             nx.draw_networkx_nodes(dag, pos, nodesize=900),
             nx.draw_networkx_edges(dag, pos),
