@@ -129,8 +129,8 @@ class Dag(object):
         from IPython.core.pylabtools import print_figure
         fig = Figure()
         canvas = FigureCanvasAgg(fig)
-        ax = fig.add_subplot(111)
-
+        ax = fig.add_axes([0, 0, 1, 1])
+        ax.axison = False
         pos = nx.spring_layout(dag)
 
         edgelabels, nodelabels = Dag.labels(dag)
@@ -157,9 +157,9 @@ class IsolateMagics(Magics):
         dag = Dag.remove_solitary_nodes(dag)
         dag = Dag.merge_edges(dag)
         dag = Dag.select_latest(dag)
-        def getpng(dag):
-            return Dag.visualize(dag, 'png')
-        dag._repr_png_ = getpng.__get__(dag)
+        def getsvg(dag):
+            return Dag.visualize(dag, 'svg')
+        dag._repr_svg_ = getsvg.__get__(dag)
         return dag
     @line_magic('isolatemode')
     def isolatemode(self, line):
