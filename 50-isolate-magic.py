@@ -13,17 +13,47 @@ class PostConditionError(NameError):
 class Dag(object):
     @staticmethod
     def MultiDiGraph(history):
+        """ 
+            build the initial MultiDiGraph from a notebook history. 
+            the graph can be further simplified.
+
+            A node is a workunit in the notebook; it is an execution 
+            of a notebook cell. we keep track of all workunits with the
+            same name; those workunits form a history sequence.
+
+            We only process
+            attributes of a node:
+               prompt_number : historical prompt number
+               content   : the content of the work unit 
+                           (whatever typed in the cell)
+               name      : name of the cell, parsed from %%isolate
+               pre       : pre condition, parsed from %%isolate
+               post      : post condition, parsed from %%isolate
+               history   : a sequence of node ids of the historical 
+                           versions of the workunits
+               version   : the index of the node in the history sequence
+
+            attributes of an edge:
+               symbols
+        """
         mdg = nx.MultiDiGraph()
-        # This is probably not the best way to handle this once we figure out
-        # what we want to do
         mdg.add_node(-1, pre=[], post=[], content="",
-                name="#BrokenPreConditions")
+                name="#BrokenPreConditions", history=[], version=-1)
+
+        workunits = {} # the history versions of cells 
 
         for id, cell in enumerate(history):
             name, pre, post = parse_unit(cell)
             if name is None:
                 name = str(id)
-            mdg.add_node(id, pre=pre, post=post, content=cell, name=name)
+            if name not in workunits:
+                workunits[name] = [id]
+            else:
+                workunits[name].append(id)
+            history = workunits[name]
+            version = len(history) - 1
+            mdg.add_node(id, prompt_number=id, pre=pre, post=post, content=cell,
+                    name=name, version=version, history=history)
 
         # now build the edges
         d = {}
@@ -41,13 +71,31 @@ class Dag(object):
 
     @staticmethod
     def remove_solitary_nodes(dag):
+        """ remove workunits that are unconnected; 
+            probably shall remove only those without a %%isolate magic 
+        """
         dag = dag.copy()
         solitary= [ n for n,d in dag.degree_iter() if d==0 ]
         dag.remove_nodes_from(solitary)
         return dag
 
     @staticmethod
+    def select_latest(dag):
+        """ select the latest versions of workunits in any history sequence;
+            all other workunits are filtered out.
+        """
+        dag = dag.copy()
+        removal = []
+        for node, data in dag.nodes_iter(data=True):
+            if data['version'] != len(data['history']) - 1:
+                removal.append(node)
+        dag.remove_nodes_from(removal)
+        return dag
+
+    @staticmethod
     def merge_edges(dag):
+        """ merge symbols on parallel dependency edges
+        """
         G = nx.DiGraph()
         for node, data in dag.nodes_iter(data=True):
             G.add_node(node, **data)
@@ -61,16 +109,37 @@ class Dag(object):
             else:
                 G.add_edge(u, v, **d)
         return G
+
     @staticmethod
     def labels(dag):
         behavededgelabel = lambda x : ', '.join(x) if isinstance(x, list) else x
         edgelabels = dict(
                 [((node, neighbour), behavededgelabel(data['symbol']))
                     for node, neighbour, data in dag.edges(data=True)])
+        behavedpromptnumber = lambda x : ', '.join(str(x)) if isinstance(x,
+                list) else str(x)
         nodelabels = dict(
-                [(node, '%d:%s' %(node, data['name']))
+                [(node, '%s:%s' %(behavedpromptnumber(data['prompt_number']), data['name']))
                     for node, data in dag.nodes(data=True)])
         return edgelabels, nodelabels
+    @staticmethod
+    def visualize(dag, format):
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        from IPython.core.pylabtools import print_figure
+        fig = Figure()
+        canvas = FigureCanvasAgg(fig)
+        ax = fig.add_subplot(111)
+
+        pos = nx.spring_layout(dag)
+
+        edgelabels, nodelabels = Dag.labels(dag)
+        nx.draw_networkx_nodes(dag, pos, nodesize=900, ax=ax)
+        nx.draw_networkx_edges(dag, pos, ax=ax)
+        nx.draw_networkx_labels(dag, pos, nodelabels, ax=ax)
+        nx.draw_networkx_edge_labels(dag, pos, edgelabels, ax=ax)
+        data = print_figure(fig, format)
+        return data
 
 @magics_class
 class IsolateMagics(Magics):
@@ -85,18 +154,13 @@ class IsolateMagics(Magics):
     def dag(self, line):
         """ make a dag !"""
         dag = Dag.MultiDiGraph(self.shell.history_manager.input_hist_raw)
-        dag = Dag.merge_edges(dag)
         dag = Dag.remove_solitary_nodes(dag)
-        # This logic should probably go in the Dag class
-        pos = nx.spring_layout(dag)
-
-        edgelabels, nodelabels = Dag.labels(dag)
-        return (
-            nx.draw_networkx_nodes(dag, pos, nodesize=900),
-            nx.draw_networkx_edges(dag, pos),
-            nx.draw_networkx_labels(dag, pos, nodelabels),
-            nx.draw_networkx_edge_labels(dag, pos, edgelabels),
-            )
+        dag = Dag.merge_edges(dag)
+        dag = Dag.select_latest(dag)
+        def getpng(dag):
+            return Dag.visualize(dag, 'png')
+        dag._repr_png_ = getpng.__get__(dag)
+        return dag
     @line_magic('isolatemode')
     def isolatemode(self, line):
         """%%isolatemode [ unprotected | loose | strict ]
