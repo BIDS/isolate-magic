@@ -10,9 +10,48 @@ class PreConditionError(NameError):
 class PostConditionError(NameError):
     pass
 
+class ProtectedNamespace(dict):
+    def __init__(self, detainee):
+        dict.__init__(self, detainee)
+        self.log = []
+        self.detainee = detainee
+
+    def enter(self):
+        """ enter a senstive region of code
+            read / write operations to the
+            namespace will be monitored
+        """
+        self.log = []
+
+    def leave(self):
+        """ leave a senstive region of code
+            returns the pre and post conditions of
+            the code segment between enter and leave
+        """
+        pre  = set([])
+        post = set([])
+        for symbol, mode in self.log:
+            if mode == 'w':
+                post.add(symbol)
+            elif mode == 'r':
+                # only if the symbol isn't
+                # created in this run.
+                if symbol not in post:
+                    pre.add(symbol)
+        return pre, post    
+
+    def __getitem__(self, key):
+        self.log.append((key, 'r'))
+        return dict.__getitem__(self, key)
+
+    def __setitem__(self, key, value):
+        self.log.append((key, 'w'))
+        self.detainee.__setitem__(key, value)
+        return dict.__setitem__(self, key, value)
+
 class Dag(object):
     @staticmethod
-    def MultiDiGraph(history):
+    def MultiDiGraph(history, augmentedhistory):
         """ 
             build the initial MultiDiGraph from a notebook history. 
             the graph can be further simplified.
@@ -42,10 +81,15 @@ class Dag(object):
 
         workunits = {} # the history versions of cells 
 
+        print augmentedhistory
         for id, cell in enumerate(history):
+            if id not in augmentedhistory: 
+                continue
             name, pre, post = parse_unit(cell)
             if name is None:
                 name = str(id)
+            if pre is None or post is None:
+                pre, post = augmentedhistory[id]
             if name not in workunits:
                 workunits[name] = [id]
             else:
@@ -102,17 +146,17 @@ class Dag(object):
         for u, v, data in dag.edges_iter(data=True):
             d = {}
             for name in data:
-                d[name] = [data[name]]
+                d[name] = set([data[name]])
             if G.has_edge(u,v):
                 for name in data:
-                    G[u][v][name].extend(data[name])
+                    G[u][v][name].update(d[name])
             else:
                 G.add_edge(u, v, **d)
         return G
 
     @staticmethod
     def labels(dag):
-        behavededgelabel = lambda x : ', '.join(x) if isinstance(x, list) else x
+        behavededgelabel = lambda x : ', '.join(x) if isinstance(x, set) else x
         edgelabels = dict(
                 [((node, neighbour), behavededgelabel(data['symbol']))
                     for node, neighbour, data in dag.edges(data=True)])
@@ -136,7 +180,6 @@ class Dag(object):
         pos = nx.spring_layout(dag)
 
         edgelabels, nodelabels = Dag.labels(dag)
-#        nx.draw_networkx_nodes(dag, pos, nodesize=900, node_color='none', ax=ax)
         nx.draw_networkx_edges(dag, pos, ax=ax)
         mydraw_networkx_labels(dag, pos, nodelabels, ax=ax,
                 horizontalalignment='center',
@@ -239,20 +282,21 @@ def mydraw_networkx_labels(G, pos,
         text_items[n] = t
 
     return text_items
-
+        
 @magics_class
 class IsolateMagics(Magics):
     STRICT = 9     # the input is p
-    UNPROTECTED = -1
     LOOSE = 0
+
     def __init__(self, shell):
         super(IsolateMagics, self).__init__(shell)
         self.level = self.LOOSE
+        self.AugmentedHistory = {}
 
     @line_magic('dag')
     def dag(self, line):
         """ make a dag !"""
-        dag = Dag.MultiDiGraph(self.shell.history_manager.input_hist_raw)
+        dag = Dag.MultiDiGraph(self.shell.history_manager.input_hist_raw, self.AugmentedHistory)
         dag = Dag.remove_solitary_nodes(dag)
         dag = Dag.merge_edges(dag)
         dag = Dag.select_latest(dag)
@@ -260,12 +304,16 @@ class IsolateMagics(Magics):
             return Dag.visualize(dag, 'svg')
         dag._repr_svg_ = getsvg.__get__(dag)
         return dag
+
+    def setup(self):
+        if not isinstance(self.shell.user_ns, ProtectedNamespace):
+            self.shell.user_ns = ProtectedNamespace(self.shell.user_ns)
+            print "setting up user_ns to", type(self.shell.user_ns)
+
     @line_magic('isolatemode')
     def isolatemode(self, line):
-        """%%isolatemode [ unprotected | loose | strict ]
-           Three modes are supported:
-
-           unprotected: the pre and post clauses are descriptive only
+        """%%isolatemode [ loose | strict ]
+           Two modes are supported:
 
            loose: the output is pruned. Any symbols undeclared with post clause
               is purged from the notebook namespace after the cell is done.
@@ -273,11 +321,10 @@ class IsolateMagics(Magics):
               the input is pruned. Only symbols declared with pre are kept when
               the cell is ran.
         """
+        self.setup()
         line = line.lower().split()
         if 'strict' in line:
             self.level = self.STRICT
-        elif 'unprotected' in line:
-            self.level = self.UNPROTECTED
         elif 'loose' in line:
             self.level = self.LOOSE
         else:
@@ -292,59 +339,40 @@ class IsolateMagics(Magics):
             %%isolate pre(a, b, c) post(d, e, f)
             %%isolate pre(a, b, c) post(d, e, f)  pre(g, h, i)
         """
+        self.setup()
+
         name, pre, post = parse(line)
-
-        old_ns = self.shell.user_ns.copy()
-
-        if self.level > self.UNPROTECTED:
-            badnames = [
-                symbol
-                for symbol in pre if not (
-                    symbol.startswith('@')
-                    or
-                    symbol in old_ns)
-            ]
-
-            if len(badnames) > 0:
-                raise PreConditionError(
-                    "The following variables are undefined: {}".format(
-                        ', '.join(badnames) ) )
-
-        if self.level >= self.STRICT:
-            self.shell.user_ns.clear()
-            for symbol in pre:
-                if symbol.startswith('@'):
-                    continue
-                self.shell.user_ns[symbol] = old_ns[symbol]
 
         # the juice is here
         # ipython processes other magics
+        self.shell.user_ns.enter()
         self.shell.run_cell(cell)
 
-        after_ns = self.shell.user_ns.copy()
+        # not the best way to do this; ask ! 
+        histid = len(self.shell.history_manager.input_hist_raw) - 1
 
-        if self.level > self.UNPROTECTED:
-            badnames = [
-                symbol
-                for symbol in post if not (
-                    symbol.startswith('@')
-                    or
-                    symbol in after_ns)
-            ]
-            # alright, due to #7256 we can't tell if run_cell failed or not
-            # so on failures we get a second error due to post-conditions.
-            if len(badnames) > 0:
-                raise PostConditionError("The following variables are undefined: %s",
-                        str(badnames))
+        realpre, realpost = self.shell.user_ns.leave()
+        
+        if pre is not None:
+            extra_pre_real = realpre.difference(pre)
+            extra_pre_assumption = pre.difference(realpre)
+            print extra_pre_real
+            print extra_pre_assumption
+            if self.level >= self.STRICT:
+                if len(extra_pre_real):
+                    raise PreConditionError(str(extra_pre_real))
 
+        if post is not None:
+            extra_post_real = realpost.difference(post)
+            extra_post_assumption = post.difference(realpost)
+            print extra_post_real
+            print extra_post_assumption
 
-        if self.level >= self.LOOSE:
-            self.shell.user_ns.clear()
-            self.shell.user_ns.update(old_ns)
-            for symbol in post:
-                if symbol.startswith('@'):
-                    continue
-                self.shell.user_ns[symbol] = after_ns[symbol]
+            if self.level >= self.STRICT:
+                if len(extra_post_real):
+                    raise PreConditionError(str(extra_post_real))
+
+        self.AugmentedHistory[histid] = (realpre, realpost)
 
     @line_magic('iso_debug')
     def debug(self, _line):
@@ -361,17 +389,22 @@ def parse_unit(cell):
 
 def parse(line):
     clauses = re.findall('(\s*(pre|post|name)\(([^)]*)\))', line)
-    pre = []
-    post = []
+    pre = None
+    post = None
     name = None
     for c in clauses:
         if c[1].lower() == 'pre':
-            pre.extend([a.strip() for a in c[2].split(', ')])
+            if pre is None:
+                pre = set()
+            pre.update(set([a.strip() for a in c[2].split(', ')]))
         elif c[1].lower() == 'post':
-            post.extend([a.strip() for a in c[2].split(', ')])
+            if post is None:
+                post = set()
+            post.update(([a.strip() for a in c[2].split(', ')]))
         elif c[1].lower() == 'name':
             name = c[2].strip()
     return name, pre, post
+
 # In order to actually use these magics, you must register them with a
 # running IPython.  This code must be placed in a file that is loaded
 # once
