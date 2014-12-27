@@ -78,7 +78,7 @@ class Dag(object):
         """
         mdg = nx.MultiDiGraph()
         mdg.add_node(-1, pre=[], post=[], content="",
-                name="#BrokenPreConditions", history=[], version=-1)
+                name="#BrokenPreConditions", history=[], prompt_number=-1, version=-1)
 
         workunits = {} # the history versions of cells 
 
