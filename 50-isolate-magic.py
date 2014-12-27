@@ -83,7 +83,6 @@ class Dag(object):
         workunits = {} # the history versions of cells 
 
         nodes = []
-        print augmentedhistory
         for id, cell in enumerate(history):
             if id not in augmentedhistory: 
                 continue
@@ -91,7 +90,8 @@ class Dag(object):
             if name is None:
                 name = str(id)
             if pre is None or post is None:
-                pre, post = augmentedhistory[id]
+                name1, pre, post = augmentedhistory[id]
+            
             if name not in workunits:
                 workunits[name] = [id]
             else:
@@ -122,9 +122,11 @@ class Dag(object):
         """ remove workunits that are unconnected; 
             probably shall remove only those without a %%isolate magic 
         """
+        old = dag
         dag = dag.copy()
         solitary= [ n for n,d in dag.degree_iter() if d==0 ]
         dag.remove_nodes_from(solitary)
+        dag.prev = old
         return dag
 
     @staticmethod
@@ -132,12 +134,14 @@ class Dag(object):
         """ select the latest versions of workunits in any history sequence;
             all other workunits are filtered out.
         """
+        old = dag
         dag = dag.copy()
         removal = []
         for node, data in dag.nodes_iter(data=True):
             if data['version'] != len(data['history']) - 1:
                 removal.append(node)
         dag.remove_nodes_from(removal)
+        dag.prev = old
         return dag
 
     @staticmethod
@@ -156,6 +160,7 @@ class Dag(object):
                     G[u][v][name].update(d[name])
             else:
                 G.add_edge(u, v, **d)
+        G.prev = dag
         return G
 
     @staticmethod
@@ -185,27 +190,58 @@ class IsolateMagics(Magics):
         super(IsolateMagics, self).__init__(shell)
         self.level = self.LOOSE
         self.AugmentedHistory = {}
+        self.echo = False
+
+    @staticmethod
+    def getsvg(dag):
+        return Dag.visualize(dag)
 
     @line_magic('dag')
     def dag(self, line):
         """ make a dag !"""
         dag = Dag.MultiDiGraph(self.shell.history_manager.input_hist_raw, self.AugmentedHistory)
+        dag._repr_svg_ = IsolateMagics.getsvg.__get__(dag)
         dag = Dag.remove_solitary_nodes(dag)
+        dag._repr_svg_ = IsolateMagics.getsvg.__get__(dag)
         dag = Dag.merge_edges(dag)
+        dag._repr_svg_ = IsolateMagics.getsvg.__get__(dag)
         dag = Dag.select_latest(dag)
-        def getsvg(dag):
-            return Dag.visualize(dag)
-        dag._repr_svg_ = getsvg.__get__(dag)
+        dag._repr_svg_ = IsolateMagics.getsvg.__get__(dag)
         return dag
+
+    def update_inputs(self, line_num):
+        hm = self.shell.history_manager
+        if line_num in self.AugmentedHistory:
+            source_raw = hm.input_hist_raw[-1]
+            newlines = []
+            for line in source_raw.split('\n'):
+                if not line.startswith('%%isolate'):
+                    newlines.append(line)
+                else:
+                    echo = self.getecho(line_num)
+                    newlines.append(echo)
+            source_raw = '\n'.join(newlines)
+            hm.input_hist_raw[-1] = source_raw
+            source = hm.input_hist_parsed[-1]
+            with hm.db_input_cache_lock:
+                for i, (ln, parsed, raw) in enumerate(hm.db_input_cache):
+                    if ln == line_num:
+                        hm.db_input_cache[i] = (ln, parsed, source_raw)
+                        break
+                else:
+                    with hm.db:
+                        hm.db.execute("UPDATE history SET source=?, source_raw=? where session==? and line==?",
+                            (source, source_raw, hm.session_number, line_num))
 
     def setup(self):
         if not isinstance(self.shell.user_ns, ProtectedNamespace):
             self.shell.user_ns = ProtectedNamespace(self.shell.user_ns)
-            print "setting up user_ns to", type(self.shell.user_ns)
+
+            self.shell.write("setting up user_ns to %s" % str(type(self.shell.user_ns)))
 
     @line_magic('isolatemode')
     def isolatemode(self, line):
-        """%%isolatemode [ loose | strict ]
+        """%%isolatemode [ loose | strict ] [ echo | noecho]
            Two modes are supported:
 
            loose: the output is pruned. Any symbols undeclared with post clause
@@ -213,6 +249,8 @@ class IsolateMagics(Magics):
            strict: in addition to `loose';
               the input is pruned. Only symbols declared with pre are kept when
               the cell is ran.
+
+           echo: print the desired %%isolate line of the cell is ran
         """
         self.setup()
         line = line.lower().split()
@@ -222,6 +260,10 @@ class IsolateMagics(Magics):
             self.level = self.LOOSE
         else:
             raise ValueError("Unsupported isolatemode")
+        if 'echo' in line:
+            self.echo = True
+        if 'noecho' in line:
+            self.echo = False
 
     @cell_magic('isolate')
     def isolate(self, line, cell):
@@ -249,24 +291,35 @@ class IsolateMagics(Magics):
         if pre is not None:
             extra_pre_real = realpre.difference(pre)
             extra_pre_assumption = pre.difference(realpre)
-            print extra_pre_real
-            print extra_pre_assumption
             if self.level >= self.STRICT:
                 if len(extra_pre_real):
-                    raise PreConditionError(str(extra_pre_real))
+                    raise PreConditionError(
+                    ','.join(extra_pre_real)
+                    )
 
         if post is not None:
             extra_post_real = realpost.difference(post)
             extra_post_assumption = post.difference(realpost)
-            print extra_post_real
-            print extra_post_assumption
 
             if self.level >= self.STRICT:
                 if len(extra_post_real):
-                    raise PreConditionError(str(extra_post_real))
+                    raise PostConditionError(
+                            ','.join(extra_post_real)
+                            )
 
-        self.AugmentedHistory[histid] = (realpre, realpost)
+        self.AugmentedHistory[histid] = (name, realpre, realpost)
+        self.update_inputs(histid)
+        if self.echo:
+            self.shell.write(self.getecho(histid) + '\n')
 
+    def getecho(self, histid):
+        name, pre, post = self.AugmentedHistory[histid]
+        echo = ' '.join([
+            "%%isolate",
+            "name(" + name + ")",
+            ("pre(" + ','.join(pre) + ")") if len(pre) else '',
+            ("post(" + ','.join(post) + ")") if len(post) else ''])
+        return echo
     @line_magic('iso_debug')
     def debug(self, _line):
         return self
