@@ -4,6 +4,7 @@ from IPython.core.magic import (Magics, magics_class, line_magic,
 import re
 
 import networkx as nx
+import nxsvg
 
 class PreConditionError(NameError):
     pass
@@ -155,134 +156,20 @@ class Dag(object):
         return G
 
     @staticmethod
-    def labels(dag):
-        behavededgelabel = lambda x : ', '.join(x) if isinstance(x, set) else x
-        edgelabels = dict(
-                [((node, neighbour), behavededgelabel(data['symbol']))
-                    for node, neighbour, data in dag.edges(data=True)])
-        nodelabels = dict(
-                [(node, '%s : %d[%s]' %(
+    def visualize(dag):
+        def NodeFormatter(node, data):
+             return   '%s \n%d[%s]' %(
                     data['name'],
                     data['prompt_number'],
                     ', '.join([str(d) for d in data['history']])
-                        ))
-                    for node, data in dag.nodes(data=True)])
-        return edgelabels, nodelabels
-    @staticmethod
-    def visualize(dag, format):
-        from matplotlib.figure import Figure
-        from matplotlib.backends.backend_agg import FigureCanvasAgg
-        from IPython.core.pylabtools import print_figure
-        fig = Figure()
-        canvas = FigureCanvasAgg(fig)
-        ax = fig.add_axes([0, 0, 1, 1])
-        ax.axison = False
+                        ), {}
+        def EdgeFormatter(u, v, data):
+            x = data['symbol']
+            return ', '.join(x) if isinstance(x, set) else x, {}
+
         pos = nx.spring_layout(dag)
+        return nxsvg.svg(dag, pos, nodeformatter=NodeFormatter, edgeformatter=EdgeFormatter)
 
-        edgelabels, nodelabels = Dag.labels(dag)
-        nx.draw_networkx_edges(dag, pos, ax=ax)
-        mydraw_networkx_labels(dag, pos, nodelabels, ax=ax,
-                horizontalalignment='center',
-                verticalalignment='center',
-                bbox={'pad':10, 'facecolor':'white'}
-                )
-        nx.draw_networkx_edge_labels(dag, pos, edgelabels, ax=ax)
-        data = print_figure(fig, format)
-        return data
-
-def mydraw_networkx_labels(G, pos,
-                         labels=None,
-                         font_size=12,
-                         font_color='k',
-                         font_family='sans-serif',
-                         font_weight='normal',
-                         alpha=1.0,
-                         ax=None,
-                         **kwds):
-    """Draw node labels on the graph G.
-
-    Parameters
-    ----------
-    G : graph
-       A networkx graph
-
-    pos : dictionary
-       A dictionary with nodes as keys and positions as values.
-       Positions should be sequences of length 2.
-
-    labels : dictionary, optional (default=None)
-       Node labels in a dictionary keyed by node of text labels
-
-    font_size : int
-       Font size for text labels (default=12)
-
-    font_color : string
-       Font color string (default='k' black)
-
-    font_family : string
-       Font family (default='sans-serif')
-
-    font_weight : string
-       Font weight (default='normal')
-
-    alpha : float
-       The text transparency (default=1.0)
-
-    ax : Matplotlib Axes object, optional
-       Draw the graph in the specified Matplotlib axes.
-
-    Returns
-    -------
-    dict
-        `dict` of labels keyed on the nodes
-
-    Examples
-    --------
-    >>> G=nx.dodecahedral_graph()
-    >>> labels=nx.draw_networkx_labels(G,pos=nx.spring_layout(G))
-
-    Also see the NetworkX drawing examples at
-    http://networkx.lanl.gov/gallery.html
-
-
-    See Also
-    --------
-    draw()
-    draw_networkx()
-    draw_networkx_nodes()
-    draw_networkx_edges()
-    draw_networkx_edge_labels()
-    """
-    try:
-        import matplotlib.pyplot as plt
-        import matplotlib.cbook as cb
-    except ImportError:
-        raise ImportError("Matplotlib required for draw()")
-    except RuntimeError:
-        print("Matplotlib unable to open display")
-        raise
-
-    if ax is None:
-        ax = plt.gca()
-
-    if labels is None:
-        labels = dict((n, n) for n in G.nodes())
-
-    text_items = {}  # there is no text collection so we'll fake one
-    for n, label in labels.items():
-        (x, y) = pos[n]
-        if not cb.is_string_like(label):
-            label = str(label)  # this will cause "1" and 1 to be labeled the same
-        t = ax.text(x, y,
-                  label,
-                  transform=ax.transData,
-                  clip_on=True,
-                  **kwds
-                  )
-        text_items[n] = t
-
-    return text_items
-        
 @magics_class
 class IsolateMagics(Magics):
     STRICT = 9     # the input is p
@@ -301,7 +188,7 @@ class IsolateMagics(Magics):
         dag = Dag.merge_edges(dag)
         dag = Dag.select_latest(dag)
         def getsvg(dag):
-            return Dag.visualize(dag, 'svg')
+            return Dag.visualize(dag)
         dag._repr_svg_ = getsvg.__get__(dag)
         return dag
 
