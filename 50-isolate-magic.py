@@ -168,7 +168,10 @@ class Dag(object):
             return ', '.join(x) if isinstance(x, set) else x, {}
 
         pos = nx.spring_layout(dag)
-        return nxsvg.svg(dag, pos, nodeformatter=NodeFormatter, edgeformatter=EdgeFormatter)
+        rend = nxsvg.SVGRenderer()
+        return rend.draw(dag, pos, 
+                nodeformatter=NodeFormatter, 
+                edgeformatter=EdgeFormatter)
 
 @magics_class
 class IsolateMagics(Magics):
