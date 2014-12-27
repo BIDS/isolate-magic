@@ -82,6 +82,7 @@ class Dag(object):
 
         workunits = {} # the history versions of cells 
 
+        nodes = []
         print augmentedhistory
         for id, cell in enumerate(history):
             if id not in augmentedhistory: 
@@ -99,19 +100,21 @@ class Dag(object):
             version = len(history) - 1
             mdg.add_node(id, prompt_number=id, pre=pre, post=post, content=cell,
                     name=name, version=version, history=history)
+            nodes.append(id)
 
         # now build the edges
         d = {}
-        for node, data in mdg.nodes(data=True):
+        for id in nodes:
+            data = mdg.node[id]
             # all post conditions are updated by this unit
             for s in data['post']:
-                d[s] = node
+                d[s] = id
             for s in data['pre']:
                 if s in d:
                     # the direction is flowing from producer to the consumer
-                    mdg.add_edge(d[s], node, symbol=s)
+                    mdg.add_edge(d[s], id, symbol=s)
                 else:
-                    mdg.add_edge(-1, node, symbol=s)
+                    mdg.add_edge(-1, id, symbol=s)
         return mdg
 
     @staticmethod
