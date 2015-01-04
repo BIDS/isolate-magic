@@ -64,7 +64,7 @@ def ext_main():
             if key not in self.hidden:
                 self.log.append((key, 'w'))
 
-    class Dag(object):
+    class FlowChart(object):
         @staticmethod
         def MultiDiGraph(history, augmentedhistory):
             """ 
@@ -132,40 +132,40 @@ def ext_main():
             return mdg
 
         @staticmethod
-        def remove_solitary_nodes(dag):
+        def remove_solitary_nodes(graph):
             """ remove workunits that are unconnected; 
                 probably shall remove only those without a %%isolate magic 
             """
-            old = dag
-            dag = dag.copy()
-            solitary= [ n for n,d in dag.degree_iter() if d==0 ]
-            dag.remove_nodes_from(solitary)
-            dag.prev = old
-            return dag
+            old = graph
+            graph = graph.copy()
+            solitary= [ n for n,d in graph.degree_iter() if d==0 ]
+            graph.remove_nodes_from(solitary)
+            graph.prev = old
+            return graph
 
         @staticmethod
-        def select_latest(dag):
+        def select_latest(graph):
             """ select the latest versions of workunits in any history sequence;
                 all other workunits are filtered out.
             """
-            old = dag
-            dag = dag.copy()
+            old = graph
+            graph = graph.copy()
             removal = []
-            for node, data in dag.nodes_iter(data=True):
+            for node, data in graph.nodes_iter(data=True):
                 if data['version'] != len(data['history']) - 1:
                     removal.append(node)
-            dag.remove_nodes_from(removal)
-            dag.prev = old
-            return dag
+            graph.remove_nodes_from(removal)
+            graph.prev = old
+            return graph
 
         @staticmethod
-        def merge_edges(dag):
+        def merge_edges(graph):
             """ merge symbols on parallel dependency edges
             """
             G = nx.DiGraph()
-            for node, data in dag.nodes_iter(data=True):
+            for node, data in graph.nodes_iter(data=True):
                 G.add_node(node, **data)
-            for u, v, data in dag.edges_iter(data=True):
+            for u, v, data in graph.edges_iter(data=True):
                 d = {}
                 for nodename in data:
                     d[nodename] = set([data[nodename]])
@@ -175,39 +175,8 @@ def ext_main():
                         G[u][v][nodename].update(d[nodename])
                 else:
                     G.add_edge(u, v, **d)
-            G.prev = dag
+            G.prev = graph
             return G
-
-        @staticmethod
-        def visualize(dag):
-            import nxsvg
-            def NodeFormatter(node, data):
-                prop = {}
-                if node != "BAD":
-                    r = data['history'].index(data['prompt_number'])
-                    prop['stroke'] = 'rgb(%d,0,0)' % (255 * (r + 1) // len(data['history']))
-                return   '\a%s\n%d[%s]' %(
-                        data['nodename'],
-                        data['prompt_number'],
-                        ', '.join([str(d) for d in data['history']])
-                            ), prop
-            def EdgeFormatter(u, v, data):
-                x = data['symbol']
-                prop = {}
-                prop['marker_mid'] = 't'
-                prop['marker_size'] = 10.0
-                return ', '.join(x) if isinstance(x, set) else x, prop
-
-            try:
-                pos = nx.graphviz_layout(dag)
-                raise Exception()
-            except Exception as e:
-                pos = nxsvg.hierarchy_layout(dag)
-            rend = nxsvg.SVGRenderer(GlobalScale=len(dag) ** 0.6 * 300.)
-            return rend.draw(dag, pos, 
-                    size=('600px', '600px'),
-                    nodeformatter=NodeFormatter, 
-                    edgeformatter=EdgeFormatter)
 
     @magics_class
     class IsolateMagics(Magics):
@@ -220,27 +189,15 @@ def ext_main():
             self.AugmentedHistory = {}
             self.echo = False
 
-        @staticmethod
-        def getsvg(dag):
-            return Dag.visualize(dag)
+        @line_magic('flowchart')
+        def flowchart(self, line):
+            """ make a graph !"""
+            graph = FlowChart.MultiDiGraph(self.shell.history_manager.input_hist_raw, self.AugmentedHistory)
+            graph = FlowChart.remove_solitary_nodes(graph)
+            graph = FlowChart.merge_edges(graph)
+            graph = FlowChart.select_latest(graph)
 
-        @line_magic('dag')
-        def dag(self, line):
-            """ make a dag !"""
-            dag = Dag.MultiDiGraph(self.shell.history_manager.input_hist_raw, self.AugmentedHistory)
-            try:
-                import nxsvg
-                dag._repr_svg_ = IsolateMagics.getsvg.__get__(dag)
-                dag = Dag.remove_solitary_nodes(dag)
-                dag._repr_svg_ = IsolateMagics.getsvg.__get__(dag)
-                dag = Dag.merge_edges(dag)
-                dag._repr_svg_ = IsolateMagics.getsvg.__get__(dag)
-                dag = Dag.select_latest(dag)
-                dag._repr_svg_ = IsolateMagics.getsvg.__get__(dag)
-            except ImportError:
-                self.shell.write_err("nxsvg not found please install nxsvg for visualization")
-
-            return dag
+            return graph
 
         def update_inputs(self, line_num):
             hm = self.shell.history_manager
@@ -271,7 +228,7 @@ def ext_main():
                 self.shell.user_ns = ProtectedNamespace(self.shell.user_ns, self.shell.user_ns_hidden)
 
                 self.shell.write("setting up user_ns to %s" % str(type(self.shell.user_ns)))
-
+                install_repr_svg()
         @line_magic('isolatemode')
         def isolatemode(self, line):
             """%%isolatemode [ loose | strict ] [ echo | noecho]
@@ -420,5 +377,45 @@ def ext_main():
     # call the default constructor on it.
     ip.register_magics(IsolateMagics)
 
+    # monkey patch networkx Graph object to add a _repr_svg_ method
+    # via nxsvg
+    def install_repr_svg():
+        import networkx
+        try:
+            import nxsvg
+        except ImportError:
+            get_ipython().write_err("easy_install nxsvg for visualization")
+            return
+        def getsvg(graph):
+
+            def NodeFormatter(node, data):
+                prop = {}
+                if node != "BAD":
+                    r = data['history'].index(data['prompt_number'])
+                    prop['stroke'] = 'rgb(%d,0,0)' % (255 * (r + 1) // len(data['history']))
+                return   '\a%s\n%d[%s]' %(
+                        data['nodename'],
+                        data['prompt_number'],
+                        ', '.join([str(d) for d in data['history']])
+                            ), prop
+            def EdgeFormatter(u, v, data):
+                x = data['symbol']
+                prop = {}
+                prop['marker_mid'] = 't'
+                prop['marker_size'] = 10.0
+                return ', '.join(x) if isinstance(x, set) else x, prop
+
+            try:
+                pos = nx.graphviz_layout(graph)
+                raise Exception()
+            except Exception as e:
+                pos = nxsvg.hierarchy_layout(graph)
+            rend = nxsvg.SVGRenderer(GlobalScale=len(graph) ** 0.6 * 300.)
+            return rend.draw(graph, pos, 
+                    size=('600px', '600px'),
+                    nodeformatter=NodeFormatter, 
+                    edgeformatter=EdgeFormatter)
+
+        networkx.Graph._repr_svg_ = getsvg
 ext_main()
 del ext_main
