@@ -4,7 +4,6 @@ def ext_main():
     import re
 
     import networkx as nx
-    import nxsvg
 
     class ProtectedNamespace(dict):
         def __init__(self, detainee, hidden):
@@ -181,6 +180,7 @@ def ext_main():
 
         @staticmethod
         def visualize(dag):
+            import nxsvg
             def NodeFormatter(node, data):
                 prop = {}
                 if node != "BAD":
@@ -228,13 +228,18 @@ def ext_main():
         def dag(self, line):
             """ make a dag !"""
             dag = Dag.MultiDiGraph(self.shell.history_manager.input_hist_raw, self.AugmentedHistory)
-            dag._repr_svg_ = IsolateMagics.getsvg.__get__(dag)
-            dag = Dag.remove_solitary_nodes(dag)
-#            dag._repr_svg_ = IsolateMagics.getsvg.__get__(dag)
-            dag = Dag.merge_edges(dag)
-            dag._repr_svg_ = IsolateMagics.getsvg.__get__(dag)
-            dag = Dag.select_latest(dag)
-            dag._repr_svg_ = IsolateMagics.getsvg.__get__(dag)
+            try:
+                import nxsvg
+                dag._repr_svg_ = IsolateMagics.getsvg.__get__(dag)
+                dag = Dag.remove_solitary_nodes(dag)
+                dag._repr_svg_ = IsolateMagics.getsvg.__get__(dag)
+                dag = Dag.merge_edges(dag)
+                dag._repr_svg_ = IsolateMagics.getsvg.__get__(dag)
+                dag = Dag.select_latest(dag)
+                dag._repr_svg_ = IsolateMagics.getsvg.__get__(dag)
+            except ImportError:
+                self.shell.write_err("nxsvg not found please install nxsvg for visualization")
+
             return dag
 
         def update_inputs(self, line_num):
