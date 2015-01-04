@@ -40,6 +40,8 @@ def ext_main():
             for symbol, mode in self.log:
                 if mode == 'w':
                     post.add(symbol)
+                elif mode == 'x':
+                    post.remove(symbol)
                 elif mode == 'r':
                     # only if the symbol isn't
                     # created in this run.
@@ -60,12 +62,21 @@ def ext_main():
                     self.log.append((key, 'r'))
             return val
 
+        def __delitem__(self, key):
+            self.detainee.__delitem__(key)
+            dict.__delitem__(self, key)
+            if key in self.hidden:
+                self.hidden.pop(key)
+            if self.log is not None:
+                self.log.append((key, 'x'))
+
         def __setitem__(self, key, value):
             self.detainee.__setitem__(key, value)
             dict.__setitem__(self, key, value)
             if self.log is not None:
-                if key not in self.hidden:
-                    self.log.append((key, 'w'))
+                if key in self.hidden:
+                    self.hidden.pop(key)
+                self.log.append((key, 'w'))
 
     class FlowChart(object):
         @staticmethod
