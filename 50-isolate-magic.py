@@ -165,8 +165,16 @@ def ext_main():
             old = graph
             graph = graph.copy()
             removal = []
+            keep = set([])
+            # add the latest nodes
             for node, data in graph.nodes_iter(data=True):
-                if data['version'] != len(data['history']) - 1:
+                if data['version'] == len(data['history']) - 1:
+                    keep.add(node)
+            for node in list(keep):
+                keep.update(nx.ancestors(graph, node))
+            
+            for node in graph.nodes_iter():
+                if node not in keep:
                     removal.append(node)
             graph.remove_nodes_from(removal)
             graph.prev = old
