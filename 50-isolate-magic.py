@@ -74,14 +74,14 @@ def ext_main():
 
                 A node is a workunit in the notebook; it is an execution 
                 of a notebook cell. we keep track of all workunits with the
-                same name; those workunits form a history sequence.
+                same nodename; those workunits form a history sequence.
 
                 We only process
                 attributes of a node:
                    prompt_number : historical prompt number
                    content   : the content of the work unit 
                                (whatever typed in the cell)
-                   name      : name of the cell, parsed from %%isolate
+                   nodename      : nodename of the cell, parsed from %%isolate
                    pre       : pre condition, parsed from %%isolate
                    post      : post condition, parsed from %%isolate
                    history   : a sequence of node ids of the historical 
@@ -92,8 +92,8 @@ def ext_main():
                    symbols
             """
             mdg = nx.MultiDiGraph()
-            mdg.add_node(-1, pre=[], post=[], content="",
-                    name="#BrokenPreConditions", history=[], prompt_number=-1, version=-1)
+            mdg.add_node("BAD", pre=[], post=[], content="NULL",
+                    nodename="BrokenPreConditions", history=[], prompt_number=-1, version=-1)
 
             workunits = {} # the history versions of cells 
 
@@ -101,20 +101,20 @@ def ext_main():
             for id, cell in enumerate(history):
                 if id not in augmentedhistory: 
                     continue
-                name, pre, post = parse_unit(cell)
-                if name is None:
-                    name = str(id)
+                nodename, pre, post = parse_unit(cell)
+                if nodename is None:
+                    nodename = str(id)
                 if pre is None or post is None:
                     name1, pre, post = augmentedhistory[id]
                 
-                if name not in workunits:
-                    workunits[name] = [id]
+                if nodename not in workunits:
+                    workunits[nodename] = [id]
                 else:
-                    workunits[name].append(id)
-                history = workunits[name]
+                    workunits[nodename].append(id)
+                history = workunits[nodename]
                 version = len(history) - 1
                 mdg.add_node(id, prompt_number=id, pre=pre, post=post, content=cell,
-                        name=name, version=version, history=history)
+                        nodename=nodename, version=version, history=history)
                 nodes.append(id)
 
             # now build the edges
@@ -129,7 +129,7 @@ def ext_main():
                         # the direction is flowing from producer to the consumer
                         mdg.add_edge(d[s], id, symbol=s)
                     else:
-                        mdg.add_edge(-1, id, symbol=s)
+                        mdg.add_edge("BAD", id, symbol=s)
             return mdg
 
         @staticmethod
@@ -168,11 +168,12 @@ def ext_main():
                 G.add_node(node, **data)
             for u, v, data in dag.edges_iter(data=True):
                 d = {}
-                for name in data:
-                    d[name] = set([data[name]])
+                for nodename in data:
+                    d[nodename] = set([data[nodename]])
+                #d['weight'] = (len(d['symbol']) + 1)
                 if G.has_edge(u,v):
-                    for name in data:
-                        G[u][v][name].update(d[name])
+                    for nodename in data:
+                        G[u][v][nodename].update(d[nodename])
                 else:
                     G.add_edge(u, v, **d)
             G.prev = dag
@@ -181,18 +182,30 @@ def ext_main():
         @staticmethod
         def visualize(dag):
             def NodeFormatter(node, data):
-                 return   '%s \n%d[%s]' %(
-                        data['name'],
+                prop = {}
+                if node != "BAD":
+                    r = data['history'].index(data['prompt_number'])
+                    prop['stroke'] = 'rgb(%d,0,0)' % (255 * (r + 1) // len(data['history']))
+                return   '\a%s\n%d[%s]' %(
+                        data['nodename'],
                         data['prompt_number'],
                         ', '.join([str(d) for d in data['history']])
-                            ), {}
+                            ), prop
             def EdgeFormatter(u, v, data):
                 x = data['symbol']
-                return ', '.join(x) if isinstance(x, set) else x, {}
+                prop = {}
+                prop['marker_mid'] = 't'
+                prop['marker_size'] = 10.0
+                return ', '.join(x) if isinstance(x, set) else x, prop
 
-            pos = nx.spring_layout(dag)
-            rend = nxsvg.SVGRenderer()
+            try:
+                pos = nx.graphviz_layout(dag)
+                raise Exception()
+            except Exception as e:
+                pos = nxsvg.hierarchy_layout(dag)
+            rend = nxsvg.SVGRenderer(GlobalScale=len(dag) ** 0.6 * 300.)
             return rend.draw(dag, pos, 
+                    size=('600px', '600px'),
                     nodeformatter=NodeFormatter, 
                     edgeformatter=EdgeFormatter)
 
@@ -216,7 +229,7 @@ def ext_main():
             """ make a dag !"""
             dag = Dag.MultiDiGraph(self.shell.history_manager.input_hist_raw, self.AugmentedHistory)
             dag._repr_svg_ = IsolateMagics.getsvg.__get__(dag)
-#            dag = Dag.remove_solitary_nodes(dag)
+            dag = Dag.remove_solitary_nodes(dag)
 #            dag._repr_svg_ = IsolateMagics.getsvg.__get__(dag)
             dag = Dag.merge_edges(dag)
             dag._repr_svg_ = IsolateMagics.getsvg.__get__(dag)
@@ -291,7 +304,7 @@ def ext_main():
             """
             self.setup()
 
-            name, pre, post = parse(line)
+            nodename, pre, post = parse(line)
             # the juice is here
             # ipython processes other magics
             if pre is not None and self.level >= self.STRICT:
@@ -303,8 +316,8 @@ def ext_main():
 
             # not the best way to do this; ask ! 
             histid = len(self.shell.history_manager.input_hist_raw) - 1
-            if name is None:
-                name = '%d' % histid
+            if nodename is None:
+                nodename = '%d' % histid
 
             oldns, realpre, realpost = self.shell.user_ns.leave()
             
@@ -349,16 +362,16 @@ def ext_main():
                             # or remove it if it were not there
                             self.shell.user_ns.pop(symbol)
                     realpre = realpre.difference(extra_post_real)
-            self.AugmentedHistory[histid] = (name, realpre, realpost)
+            self.AugmentedHistory[histid] = (nodename, realpre, realpost)
             self.update_inputs(histid)
             if self.echo:
                 self.shell.write(self.getecho(histid) + '\n')
 
         def getecho(self, histid):
-            name, pre, post = self.AugmentedHistory[histid]
+            nodename, pre, post = self.AugmentedHistory[histid]
             echo = ' '.join([
                 "%%isolate",
-                "name(" + name + ")",
+                "nodename(" + nodename + ")",
                 ("pre(" + ','.join(pre) + ")") if len(pre) else '',
                 ("post(" + ','.join(post) + ")") if len(post) else ''])
             return echo
@@ -370,15 +383,15 @@ def ext_main():
         for line in cell.split('\n'):
             if not line.startswith('%%isolate'):
                 pass
-            name, pre, post = parse(line)
-            return name, pre, post
+            nodename, pre, post = parse(line)
+            return nodename, pre, post
         return None
 
     def parse(line):
         clauses = re.findall('(\s*(pre|post|name)\(([^)]*)\))', line)
         pre = None
         post = None
-        name = None
+        nodename = None
         for c in clauses:
             if c[1].lower() == 'pre':
                 if pre is None:
@@ -389,8 +402,8 @@ def ext_main():
                     post = set()
                 post.update(set([a.strip() for a in c[2].split(',') if len(a.strip())]))
             elif c[1].lower() == 'name':
-                name = c[2].strip()
-        return name, pre, post
+                nodename = c[2].strip()
+        return nodename, pre, post
 
     # In order to actually use these magics, you must register them with a
     # running IPython.  This code must be placed in a file that is loaded
