@@ -8,7 +8,7 @@ def ext_main():
     class ProtectedNamespace(dict):
         def __init__(self, detainee, hidden):
             dict.__init__(self, detainee)
-            self.log = []
+            self.log = None
             self.detainee = detainee
             self.hidden = hidden
 
@@ -49,20 +49,23 @@ def ext_main():
             for symbol in self.backup:
                 if symbol not in self:
                     self[symbol] = self.backup[symbol]
+            self.log = None
             return self.backup, pre, post    
 
         def __getitem__(self, key):
             #print 'get', key, self.keys()
             val = dict.__getitem__(self, key)
-            if key not in self.hidden:
-                self.log.append((key, 'r'))
+            if self.log is not None:
+                if key not in self.hidden:
+                    self.log.append((key, 'r'))
             return val
 
         def __setitem__(self, key, value):
             self.detainee.__setitem__(key, value)
             dict.__setitem__(self, key, value)
-            if key not in self.hidden:
-                self.log.append((key, 'w'))
+            if self.log is not None:
+                if key not in self.hidden:
+                    self.log.append((key, 'w'))
 
     class FlowChart(object):
         @staticmethod
