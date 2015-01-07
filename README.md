@@ -10,52 +10,35 @@ For now, copy the file with the magic to the startup directory in
 the desired ipython profile. If you don't have a preference, probably
 `~/.ipython/profile_default/startup/` or the equivalent.
 
+We also shall investigate the use of `pre-cell-run` and `post-cell-run` hooks.
+
 Syntax (currently)
 ------------------
 ```
-%%isolate  pre(pre-conditions of the cell) post(post-conditions of the cell)
+%%isolate  name(name of the cell) pre(pre-conditions of the cell) post(post-conditions of the cell)
 ```
 
-The conditions can be variable names or special names starting with @.
+The conditions can be a list of variable names, seperated by ','
   * pre-condition variables are pull from the notebook namespace before cell
     execution
   * post-conditoin variables are pushed to the notebook namespace after cell
     execution
-  * special names prepresent resources that are not in the notebook namespace,
-    for example, files on the disk
+  * if any of the conditions are omitted, isolate magic will identify them by tracking modifications to the global name space.
 
 An active example is in:
   * http://nbviewer.ipython.org/github/BIDS/isolate-magic/blob/master/example.ipynb
 
-For example, we can have cells like these:
-
-```
-%%isolate post(@IMPORTANT_TEXT)
-!wget http://github.com/BIDS/isolate-magic/tree/README.md
-```
-
-```
-%%isolate pre(@IMPORTANT_TEXT) post(os)
-# notice that we do not support attribute look up in post
-# hence our post-condition is only 'os'
-import os.path
-assert os.path.exists('README.md')
-```
 
 
-How to build a DAG from 'isolate' magics
+How to build a Flow-Chart from 'isolate' magics
 ----------------------------------------
- 1. read in the ipynb file
- 2. sort by `prompt number`
- 3. post = {}
- 4. transverse the cell list
-   a. if cell has post-condition, add the cell to post dict
-   b. if cell has pre-condition, look up the post dict, and make a 'proper' link
-      if not, issue a warning, push the cell to a list of defered cells
- 5. Loop over the defered cells
-   a. if cell has pre-condition, look up the post dict, and make a 'improper' link
-      if not, issue a warning in some way (marking the cell as dead/incomplete)
+We also have experimental support for building a flow chart with the post/pre conditions decleared / infered from the notebook history. Currently, only the current session is supported.
 
- * 'proper': the tail cell's last execution is up-to-date
- * 'improper': the tail cell's last execution is older than its input; it at
-   least needs updated.
+This feature requires networkx and nxsvg (which requires svgwrite). 
+```
+g = %flowchart
+```
+If the dependency are installed properly, a svg element can be seen in the output of the cell.
+
+The flow chart only contains those lead to the most recent versions of any named cells.
+It is constructed by simplifying the original full diagram. The intermediate graphs can be inspected via `g.prev`.
